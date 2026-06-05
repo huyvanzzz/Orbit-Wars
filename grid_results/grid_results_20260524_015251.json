@@ -1,0 +1,27 @@
+[
+  {
+    "switch_step": 75,
+    "handoff_end": 110,
+    "relaunch_min_ships": 90,
+    "relaunch_threat_frac": 0.18,
+    "relaunch_prod_mult": 1.05,
+    "relaunch_prod_add": 3,
+    "crush_prod_ratio": 3.2,
+    "aggressive_prod_ratio": 1.6,
+    "aggressive_ship_ratio": 2.0,
+    "defend_prod_frac": 0.6,
+    "matches": 20,
+    "main_avg": -0.5,
+    "main_wins": 5,
+    "main_losses": 15,
+    "main_median": -1.0,
+    "agent_02_avg": -0.3,
+    "agent_02_wins": 7,
+    "agent_03_avg": -0.2,
+    "agent_03_wins": 8,
+    "agent_04_avg": -1.0,
+    "agent_04_wins": 0,
+    "all_done": true,
+    "index": 42
+  }
+]

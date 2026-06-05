@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Wars Agent Optimizer"
+  short_description: "Iterative Orbit Wars agent tuning workflow"
+  default_prompt: "Use $orbit-wars-agent-optimizer to improve and validate an Orbit Wars coding agent."

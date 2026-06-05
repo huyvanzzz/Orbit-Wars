@@ -1,0 +1,3 @@
+switch_step,handoff_end,relaunch_min_ships,relaunch_threat_frac,relaunch_prod_mult,relaunch_prod_add,other_prod_weight,other_ship_weight,crush_prod_ratio,aggressive_prod_ratio,aggressive_ship_ratio,defend_leader_frac,dominate_leader_mult,leader_score_bonus,leader_gap_bonus,nonleader_penalty,nonleader_penalty_trigger,matches,main_avg,main_wins,main_losses,main_median,agent_02_avg,agent_02_wins,agent_03_avg,agent_03_wins,agent_04_avg,agent_04_wins,all_done,index
+60,95,70,0.2,1.2,4,0.35,0.25,4.0,2.0,2.5,0.75,1.05,18.0,1.2,24.0,1.05,20,-0.3,7,13,-1.0,-0.8,2,-0.8,2,-0.1,9,True,1
+65,95,70,0.2,1.2,4,0.35,0.25,4.0,2.0,2.5,0.75,1.05,18.0,1.2,24.0,1.05,20,-0.6,4,16,-1.0,-0.6,4,-0.7,3,-0.1,9,True,0

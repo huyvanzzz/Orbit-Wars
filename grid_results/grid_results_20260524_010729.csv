@@ -1,0 +1,2 @@
+switch_step,handoff_end,relaunch_min_ships,relaunch_threat_frac,relaunch_prod_mult,relaunch_prod_add,crush_prod_ratio,aggressive_prod_ratio,aggressive_ship_ratio,defend_prod_frac,matches,main_avg,main_wins,main_losses,main_median,agent_02_avg,agent_02_wins,agent_03_avg,agent_03_wins,agent_04_avg,agent_04_wins,all_done,index
+65,95,70,0.2,1.2,4,3.5,1.8,2.2,0.65,20,-0.6,4,16,-1.0,-0.2,8,-0.2,8,-1.0,0,True,27
