@@ -3303,50 +3303,8 @@ def friendly_flip_targets(
     urgency = prod * remaining + obs.ships
     urgency = torch.where(any_flip, urgency, torch.full_like(urgency, float("-inf")))
     return any_flip, urgency
-def ffa_target_bias(obs, *, config, player_count: int) -> Tensor:
-    """4P-only strategic target bias in score units, one value per planet.
-    Keeps the tactical flow scorer intact, but nudges target discovery/selection
-    toward valuable neutrals and leader-owned planets in FFA.
-    """
-    P = obs.P
-    device = obs.device
-    dtype = obs.ships.dtype
-    if int(player_count) < 4:
-        return torch.zeros(P, dtype=dtype, device=device)
-    weights_on = (
-        float(config.ffa_neutral_prod_weight) != 0.0
-        or float(config.ffa_enemy_prod_weight) != 0.0
-        or float(config.ffa_leader_focus_bonus) != 0.0
-        or float(config.ffa_weak_enemy_penalty) != 0.0
-    )
-    if not weights_on:
-        return torch.zeros(P, dtype=dtype, device=device)
-    A_eff = max(1, int(player_count))
-    owner_raw = obs.owner_abs.to(device=device, dtype=torch.long)
-    valid_owner = obs.alive & (owner_raw >= 0) & (owner_raw < A_eff)
-    owner_safe = owner_raw.clamp(0, A_eff - 1)
-    prod_by_owner = torch.zeros(A_eff, dtype=dtype, device=device)
-    prod_by_owner.scatter_add_(0, owner_safe, torch.where(valid_owner, obs.prod.to(dtype), torch.zeros(P, dtype=dtype, device=device)))
-    pid = int(obs.player_id)
-    player_idx = torch.arange(A_eff, device=device)
-    enemy_player = player_idx != pid
-    enemy_prod = torch.where(enemy_player, prod_by_owner, torch.full_like(prod_by_owner, float("-inf")))
-    leader_prod = enemy_prod.max()
-    my_prod = prod_by_owner[pid] if 0 <= pid < A_eff else torch.zeros((), dtype=dtype, device=device)
-    owner_prod = prod_by_owner[owner_safe]
-    is_enemy = obs.is_enemy & valid_owner
-    leader_target = is_enemy & (owner_prod >= leader_prod - 1e-6) & (
-        leader_prod >= my_prod + float(config.ffa_leader_prod_gap)
-    )
-    weak_enemy = is_enemy & (owner_prod + float(config.ffa_leader_prod_gap) < leader_prod)
-    bias = torch.zeros(P, dtype=dtype, device=device)
-    bias = bias + obs.is_neutral.to(dtype) * obs.prod.to(dtype) * float(config.ffa_neutral_prod_weight)
-    bias = bias + is_enemy.to(dtype) * obs.prod.to(dtype) * float(config.ffa_enemy_prod_weight)
-    bias = bias + leader_target.to(dtype) * float(config.ffa_leader_focus_bonus)
-    bias = bias - weak_enemy.to(dtype) * float(config.ffa_weak_enemy_penalty)
-    return torch.where(obs.alive, bias, torch.zeros_like(bias))
 def build_target_shortlist(
-    obs, obs_tensors, garrison_status, cache, *, config, K_eta, H, prod, source_mask, player_count,
+    obs, obs_tensors, garrison_status, cache, *, config, K_eta, H, prod, source_mask,
 ):
     """Single unified shortlist: ``max_offensive_targets`` enemy/neutral targets by
     proximity ∪ ``max_defensive_targets`` friendly-flip targets by urgency., The
@@ -3358,8 +3316,7 @@ def build_target_shortlist(
     R = max(0, min(int(config.max_defensive_targets), P))
     attack_mask = attack_target_mask(obs, obs_tensors)
     proximity = min_distance_to_targets(cache, source_mask, attack_mask, max_k=K_eta)
-    bias = ffa_target_bias(obs, config=config, player_count=int(player_count))
-    attack_pref = torch.where(attack_mask, -proximity + bias, torch.full_like(proximity, float("-inf")))
+    attack_pref = torch.where(attack_mask, -proximity, torch.full_like(proximity, float("-inf")))
     atk_idx, atk_exists = _candidate_indices(attack_pref, attack_mask, n_attack)
     if R > 0:
         flip_mask, urgency = friendly_flip_targets(obs, garrison_status, H=H, prod=prod)
@@ -3428,8 +3385,7 @@ def reachable_mask(
 def _greedy_select(
     *, P, W, device, dtype, score, cand_src, cand_send, cand_angle, cand_eta,
     cand_active, cand_tgt_slot, cand_tgt_short, cand_is_def, source_budget,
-    target_exists, roi_threshold, ship_spend_penalty=0.0, defense_spend_discount=0.25,
-    lookahead_weight=0.0,
+    target_exists, roi_threshold,
 ) -> LaunchEntries:
     """Masking-only greedy over [C, L] candidates: pick the best wave each iter,
     one per target, source-budget aware across all L contributors. Enforces the
@@ -3453,58 +3409,9 @@ def _greedy_select(
         tgt_used_as_src = used_src[cand_tgt_slot]                               # [C]
         contrib_defended = (defended[cand_src] & cand_active).any(dim=-1)       # [C]
         mask = torch.isfinite(score) & ~taken_cand & can_fund & ~tgt_used_as_src & ~contrib_defended
-        total_send = torch.where(cand_active, cand_send, torch.zeros_like(cand_send)).sum(dim=-1)
-        spend_discount = torch.where(
-            cand_is_def,
-            torch.full_like(score, float(defense_spend_discount)),
-            torch.ones_like(score),
-        )
-        effective_score = score - float(ship_spend_penalty) * total_send * spend_discount
-        masked_current = torch.where(mask, effective_score, torch.full_like(score, float("-inf")))
-        if float(lookahead_weight) > 0.0 and C > 1:
-            cand_debit = torch.zeros(C, P, dtype=dtype, device=device)
-            cand_debit.scatter_add_(
-                1,
-                cand_src,
-                torch.where(cand_active, cand_send, torch.zeros_like(cand_send)),
-            )
-            budget_after_i = (source_budget.view(1, P) - cand_debit).clamp(min=0.0)
-            budget_for_j_after_i = budget_after_i[:, cand_src]                  # [i, j, l]
-            j_can_fund_after_i = (
-                (cand_send.view(1, C, L) <= budget_for_j_after_i)
-                | ~cand_active.view(1, C, L)
-            ).all(dim=-1)                                                       # [i, j]
-            i_used_src = cand_debit > 0.0                                       # [i, p]
-            j_tgt_used_by_i = i_used_src[:, cand_tgt_slot]                      # [i, j]
-            j_uses_i_defended_tgt = (
-                (
-                    cand_src.view(1, C, L) == cand_tgt_slot.view(C, 1, 1)
-                )
-                & cand_active.view(1, C, L)
-            ).any(dim=-1) & cand_is_def.view(C, 1)                              # [i, j]
-            distinct_target = cand_tgt_short.view(1, C) != cand_tgt_short.view(C, 1)
-            next_mask = (
-                mask.view(1, C)
-                & distinct_target
-                & j_can_fund_after_i
-                & ~j_tgt_used_by_i
-                & ~j_uses_i_defended_tgt
-            )
-            next_score = torch.where(
-                next_mask,
-                effective_score.view(1, C),
-                torch.full((C, C), float("-inf"), dtype=dtype, device=device),
-            ).max(dim=-1).values
-            next_bonus = (next_score - float(roi_threshold)).clamp(min=0.0)
-            masked_rank = torch.where(
-                mask,
-                effective_score + float(lookahead_weight) * next_bonus,
-                torch.full_like(score, float("-inf")),
-            )
-        else:
-            masked_rank = masked_current
-        best_c = _stable_argmax(masked_rank)                                    # scalar, device-stable
-        best_score = masked_current[best_c]
+        masked = torch.where(mask, score, torch.full_like(score, float("-inf")))
+        best_c = _stable_argmax(masked)                                         # scalar, device-stable
+        best_score = masked[best_c]
         fired = bool(torch.isfinite(best_score) & (best_score > roi_threshold))
         if not fired:
             break
@@ -3931,12 +3838,6 @@ class ProducerLiteConfig:
     max_waves_per_turn: int = 6
     roi_threshold: float = 1.5              # fire if score > this
     min_ships_to_launch: float = 4.0
-    enable_single_source_size_variants: bool = False
-    single_source_size_fracs: tuple[float, ...] = (1.0,)
-    greedy_ship_spend_penalty: float = 0.0
-    greedy_defense_spend_discount: float = 0.25
-    enable_greedy_lookahead: bool = False
-    greedy_lookahead_weight: float = 0.0
     # --- regroup  ------------------------------
     enable_regroup: bool = True
     max_regroup_time: float = 7.0
@@ -3951,12 +3852,6 @@ class ProducerLiteConfig:
     risk_enemy_prod_weight: float = 2.0     # enemy strength = ships + w * production
     risk_self_prod_weight: float = 2.0      # own-planet value  = 1 + w * production
     risk_support_weight: float = 0.5        # friendly-neighbour discount strength
-    # --- 4P FFA strategic target shaping --------------------------------
-    ffa_neutral_prod_weight: float = 0.0
-    ffa_enemy_prod_weight: float = 0.0
-    ffa_leader_focus_bonus: float = 0.0
-    ffa_leader_prod_gap: float = 0.0
-    ffa_weak_enemy_penalty: float = 0.0
     # --- focus fire (coordinated multi-source attack) -------------------
     enable_focus_fire: bool = True          # pool same-step sources to take strong targets
     max_strike_sources: int = 4             # max planets combined per strike (contributor cap L)
@@ -4086,7 +3981,6 @@ def plan_lite_waves(
     target_idx, target_exists = build_target_shortlist(
         obs, obs_tensors, garrison_status, cache,
         config=config, K_eta=K_eta, H=H, prod=prod, source_mask=source_mask,
-        player_count=int(player_count),
     )
     if not bool(target_exists.any()):
         return _empty_entries(device, dtype)
@@ -4139,58 +4033,18 @@ def plan_lite_waves(
         viable & clears_floor & (sizes >= 1.0) & src_neq_tgt
         & source_exists.view(S, 1) & target_exists.view(1, T)
     )                                                                            # [S, T]
-    size_fracs = tuple(float(x) for x in getattr(config, "single_source_size_fracs", (1.0,)) if float(x) > 0.0)
-    if not bool(getattr(config, "enable_single_source_size_variants", False)):
-        size_fracs = (1.0,)
-    if not size_fracs:
-        size_fracs = (1.0,)
-    size_fracs = tuple(dict.fromkeys(size_fracs))
-    if len(size_fracs) == 1 and abs(size_fracs[0] - 1.0) < 1e-9:
-        Gs = 1
-        ss_sizes_g = sizes.unsqueeze(-1)
-        ss_angle_g = angle.unsqueeze(-1)
-        ss_eta_g = eta.unsqueeze(-1)
-        ss_valid_g = valid.unsqueeze(-1)
-    else:
-        frac_t = torch.tensor(size_fracs, dtype=dtype, device=device).view(1, 1, -1)
-        Gs = int(frac_t.shape[-1])
-        ss_sizes_g = (drain.view(S, 1, 1) * frac_t).floor()
-        ss_active_g = reachable_mask(
-            movement, source_idx=source_idx, target_idx=target_idx,
-            fleet_sizes=ss_sizes_g, eta_cap=eta_cap,
-        )                                                                        # [S, T, Gs]
-        ss_aim_g = intercept_angle(
-            movement,
-            source_idx.view(S, 1, 1),
-            target_idx.view(1, T, 1),
-            ss_sizes_g,
-            active=ss_active_g,
-        )
-        ss_angle_g = ss_aim_g["angle"]
-        ss_eta_g = ss_aim_g["eta"]
-        ss_viable_g = ss_aim_g["viable"] & (ss_eta_g <= eta_cap.view(1, T, 1))
-        if K > 0:
-            ss_k_arr = (ss_eta_g.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
-            ss_floor_at_arr = floor.view(1, T, K).expand(S, T, K).gather(-1, ss_k_arr)
-        else:
-            ss_floor_at_arr = torch.ones(S, T, Gs, dtype=dtype, device=device)
-        ss_valid_g = (
-            ss_viable_g & (ss_sizes_g >= ss_floor_at_arr) & (ss_sizes_g >= 1.0)
-            & src_neq_tgt.unsqueeze(-1)
-            & source_exists.view(S, 1, 1) & target_exists.view(1, T, 1)
-        )
     if not bool(config.enable_focus_fire):
         # --- original: one single-source candidate per (source, target); L = 1 ----
         L = 1
-        C = S * T * Gs
-        cand_src = source_idx.view(S, 1, 1).expand(S, T, Gs).reshape(C, L)
-        cand_tgt_slot = target_idx.view(1, T, 1).expand(S, T, Gs).reshape(C)
-        cand_tgt_short = torch.arange(T, device=device).view(1, T, 1).expand(S, T, Gs).reshape(C)
-        cand_send = torch.where(ss_valid_g, ss_sizes_g, torch.zeros_like(ss_sizes_g)).reshape(C, L)
-        cand_angle = ss_angle_g.reshape(C, L)
-        cand_eta = torch.where(ss_valid_g, ss_eta_g, torch.ones_like(ss_eta_g)).reshape(C, L)
-        cand_active = ss_valid_g.reshape(C, L)
-        cand_valid = ss_valid_g.reshape(C)
+        C = S * T
+        cand_src = source_idx.view(S, 1).expand(S, T).reshape(C, L)
+        cand_tgt_slot = target_idx.view(1, T).expand(S, T).reshape(C)
+        cand_tgt_short = torch.arange(T, device=device).view(1, T).expand(S, T).reshape(C)
+        cand_send = torch.where(valid, sizes, torch.zeros_like(sizes)).reshape(C, L)
+        cand_angle = angle.reshape(C, L)
+        cand_eta = torch.where(valid, eta, torch.ones_like(eta)).reshape(C, L)
+        cand_active = valid.reshape(C, L)
+        cand_valid = valid.reshape(C)
     else:
         # --- focus fire: single-source candidates (widened to L) ++ pooled, same-
         # step multi-source strikes that combine to clear strong targets no single
@@ -4198,20 +4052,20 @@ def plan_lite_waves(
         # flow-diff sums them vs the defender at that step. Strictly additive: the
         # single-source slot-0 scores are identical to the original path.
         L = max(1, int(config.max_strike_sources))
-        ST = S * T * Gs
+        ST = S * T
         ss_src = torch.zeros(ST, L, dtype=torch.long, device=device)
-        ss_src[:, 0] = source_idx.view(S, 1, 1).expand(S, T, Gs).reshape(-1)
+        ss_src[:, 0] = source_idx.view(S, 1).expand(S, T).reshape(-1)
         ss_send = torch.zeros(ST, L, dtype=dtype, device=device)
-        ss_send[:, 0] = torch.where(ss_valid_g, ss_sizes_g, torch.zeros_like(ss_sizes_g)).reshape(-1)
+        ss_send[:, 0] = torch.where(valid, sizes, torch.zeros_like(sizes)).reshape(-1)
         ss_angle = torch.zeros(ST, L, dtype=dtype, device=device)
-        ss_angle[:, 0] = ss_angle_g.reshape(-1)
+        ss_angle[:, 0] = angle.reshape(-1)
         ss_eta = torch.ones(ST, L, dtype=dtype, device=device)
-        ss_eta[:, 0] = torch.where(ss_valid_g, ss_eta_g, torch.ones_like(ss_eta_g)).reshape(-1)
+        ss_eta[:, 0] = torch.where(valid, eta, torch.ones_like(eta)).reshape(-1)
         ss_active = torch.zeros(ST, L, dtype=torch.bool, device=device)
-        ss_active[:, 0] = ss_valid_g.reshape(-1)
-        ss_tgt_slot = target_idx.view(1, T, 1).expand(S, T, Gs).reshape(-1)
-        ss_tgt_short = torch.arange(T, device=device).view(1, T, 1).expand(S, T, Gs).reshape(-1)
-        ss_valid = ss_valid_g.reshape(-1)
+        ss_active[:, 0] = valid.reshape(-1)
+        ss_tgt_slot = target_idx.view(1, T).expand(S, T).reshape(-1)
+        ss_tgt_short = torch.arange(T, device=device).view(1, T).expand(S, T).reshape(-1)
+        ss_valid = valid.reshape(-1)
         # Pooled strikes on offensive (non-owned) targets: group eligible sources by
         # arrival step, take the minimal drain-desc prefix (>=2) that clears the floor.
         eligible = (
@@ -4300,13 +4154,6 @@ def plan_lite_waves(
         cand_active=cand_active, cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
         cand_is_def=cand_is_def, source_budget=obs.ships.to(dtype).clone(),
         target_exists=target_exists, roi_threshold=float(config.roi_threshold),
-        ship_spend_penalty=float(config.greedy_ship_spend_penalty),
-        defense_spend_discount=float(config.greedy_defense_spend_discount),
-        lookahead_weight=(
-            float(config.greedy_lookahead_weight)
-            if bool(config.enable_greedy_lookahead)
-            else 0.0
-        ),
     )
     if not bool(config.enable_regroup):
         return wave_entries
@@ -4366,17 +4213,7 @@ CONFIG_4P = dataclasses.replace(
     max_defensive_targets=2,
     max_regroup_time=6.0,
     max_regroup_targets_per_source=8,
-    enable_single_source_size_variants=False,
-    single_source_size_fracs=(1.0,),
-    greedy_ship_spend_penalty=0.0,
-    enable_greedy_lookahead=True,
-    greedy_lookahead_weight=0.25,
     risk_blend_weight=0.5,                   # damp the precaution in diffuse 4p FFA
-    ffa_neutral_prod_weight=0.0,
-    ffa_enemy_prod_weight=0.0,
-    ffa_leader_focus_bonus=0.0,
-    ffa_leader_prod_gap=0.0,
-    ffa_weak_enemy_penalty=0.0,
     max_strike_sources=3,                    # leaner combined strikes in 4p FFA
 )
 def _config_for(player_count: int) -> ProducerLiteConfig:

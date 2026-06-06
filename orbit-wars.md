@@ -222,3 +222,30 @@ File này dùng để ghi lại logic theo từng phiên bản của bot, chủ 
 - Ket luan: slot2 thua chu yeu vi 4P midgame bi leader snowball production quanh turn 60-100; cac cach them move/oversend truc tiep de bi overcommit hoac kingmaking. Huong tiep theo nen la owner-aware planner co danh gia loi ich rieng cua `main.py` sau khi danh leader, khong chi them attack/guard fallback.
 - Doc sau hon pipeline `agent -> World -> plan_moves -> search/expand/hammer`: phat hien `pressure` mode 4P co `expand_k_mid=0`, nen neu Melis search khong commit thi agent co the dung im du con production/ships. Thu pressure-recovery expand 4P-only de mo lai K=1 khi search rong va leader hon production: screen 0/3, rollback.
 - Thu anti-kingmaker 4P-only: khi contest leader tu turn 45 thi bo qua enemy non-leader neu leader hon owner do ve production, van cho danh neutral/leader. Screen 2/3 nhung confirm 10 chi 3/10, rollback. Ket luan: y tuong owner-aware co tin hieu ngan han nhung can danh gia loi ich rieng sau capture tot hon, khong chi hard-skip owner.
+
+## Version 24 - Submission.py 4P greedy lookahead improvement
+- Chuyen huong sang toi uu `submission.py` rieng, voi `submission_copy.py` lam baseline/reference trong benchmark moi. Notebook/order user bao cao: `A1_agent_04`, `A2_submission_copy`, `A3_my_improved_agent`, `A4_main`; improved agent la `submission.py`.
+- Phan tich `submission.py` goc: day la model-based tactical planner, co tensor obs parser, orbit/fleet physics, `PlanetMovement` forecast, projected garrison status, competitive flow-diff scoring, focus-fire multi-source, va regroup leftover ships. Diem manh la aiming/physics va scorer rat sau; diem yeu la phan chon wave cuoi van greedy cuc bo.
+- Van de chinh cua submission goc trong 4P: `_greedy_select` chon candidate score cao nhat hien tai, debit source/lock target xong moi lap tiep. Trong FFA, mot wave cuc bo cao co the an het source quan trong, lock target, hoac kich hoat role mutex lam mat wave thu hai tot hon. 4P config goc chu yeu giam horizon/source so voi 2P, chua co co che danh gia follow-up opportunity.
+- Rang buoc tu user: khong sua co che multi-planet/focus-fire; chi cai tien greedy va 4P. 2P phai gan nhu khong bi anh huong, nen cac knob moi deu default off trong `ProducerLiteConfig` va chi bat trong `CONFIG_4P`.
+- Attempt fail 1: them 4P target bias cho neutral production cao/leader-owned target, them ship-spend penalty trong greedy, va tang nhe horizon/source width. User test bao xau hon baseline khoang 2 tran. Ket luan: target bias can thiep qua tho vao flow-diff scorer; ship penalty lam agent ngai ban cac wave lon nhung can thiet. Da tat ship penalty, bo cong target bias vao final score, dua horizon/source ve baseline.
+- Attempt fail 2: them single-source size variants 4P-only `(1.0, 0.75, 0.55)` de agent co lua chon ban vua du thay vi luon dung `safe_drain`. Multi-planet/focus-fire khong doi. User test bao te hon rat nhieu, con te hon attempt 1. Ket luan: candidate size nho lam tang khong gian action nhung lam agent kem quyet doan/pressure; scoring goc co ve phu thuoc candidate full safe-drain. Da tat `enable_single_source_size_variants=False`, `single_source_size_fracs=(1.0,)`.
+- Cai tien dang giu: 4P greedy one-step lookahead trong `_greedy_select`. Khong doi target shortlist, khong doi fleet size, khong doi multi-planet. Van dung score tactical goc, nhung khi rank candidate hien tai `i`, tinh nhanh wave tot nhat `j` con co the ban sau khi chon `i` theo budget/source/target/role mutex.
+- Cong thuc rank moi:
+```python
+current_effective_score(i)
++ greedy_lookahead_weight * max(next_score(i) - roi_threshold, 0)
+```
+- Diem an toan quan trong: dieu kien fire van dua tren current score cua wave hien tai, khong dua tren bonus lookahead. Nghia la lookahead chi sap xep lai cac wave hien tai da du tot, khong ep ban mot wave kem chi vi no mo duong cho wave sau.
+- Config hien tai chi bat trong 4P: `enable_greedy_lookahead=True`, `greedy_lookahead_weight=0.25`. Default 2P van `enable_greedy_lookahead=False`, `greedy_lookahead_weight=0.0`, nen 2P khong doi hanh vi thuc te.
+- Ket qua user bao cao tren 30 matches:
+```text
+=== Average rewards ===
+A1_agent_04 avg_reward= -1.0 matches= 30
+A2_submission_copy avg_reward= -0.1333 matches= 30
+A3_my_improved_agent avg_reward= 0.0667 matches= 30
+A4_main avg_reward= -0.9333 matches= 30
+Saved replay: /kaggle/working/replays/last_benchmark_4v4.html
+```
+- Dien giai: `submission_copy` baseline avg reward `-0.1333`, improved `submission.py` avg reward `0.0667`, chenhlech `+0.2000` avg reward tren 30 matches. Day la ban dau tien trong nhanh `submission.py` duoc user bao cao la tot hon submission goc.
+- Trang thai hien tai: giu greedy lookahead 4P; target bias disabled; ship-spend penalty disabled; single-source size variants disabled; multi-planet/focus-fire unchanged; 2P effectively unchanged.
