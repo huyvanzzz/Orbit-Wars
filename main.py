@@ -4,7 +4,6 @@
 import math
 import os
 import time
-import importlib.util
 from collections import defaultdict, namedtuple
 
 F14_4A_2P_FOCUS_ENABLED = True
@@ -380,6 +379,7 @@ FOUR_P_PRESSURE_ENEMY_BONUS = 8.0
 FOUR_P_PRESSURE_NEUTRAL_PENALTY = 8.0
 FOUR_P_EXTERNAL_ENABLED = False
 FOUR_P_EXTERNAL_SWITCH_STEP = 65
+# External 4P embedded fallback removed; active planner path is kept below.
 
 
 MEGA_HAMMER_THRESHOLD_BY_PROD = {5: 200, 4: 250, 3: 300, 2: 350, 1: 400}
@@ -2057,27 +2057,6 @@ _promoted_stockpiles = set()
 _game_num_players = None        
 _2p_patient_streak = 0         
 _2p_prod_share_history = []     
-_four_p_external_agent = None
-
-
-def _load_four_p_external_agent():
-    global _four_p_external_agent
-    if _four_p_external_agent is not None:
-        return _four_p_external_agent
-    base_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
-    agent_path = os.path.join(base_dir, "main_plus_main5_ideas.py")
-    if not os.path.exists(agent_path):
-        return None
-    spec = importlib.util.spec_from_file_location("orbit_wars_external_4p_agent", agent_path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _four_p_external_agent = getattr(module, "agent", None)
-    return _four_p_external_agent
-
-
-
 
 
 
@@ -4998,7 +4977,6 @@ def plan_moves(world, deadline=None):
 def agent(obs, config=None):
     global _agent_step, _hammer_plan, _planet_idle_counts, _promoted_stockpiles, _pending_commitments
     global _game_num_players, _2p_patient_streak, _2p_prod_share_history
-    global _four_p_external_agent
 
     global _opp_profile  
     obs_step = _read(obs, "step", 0) or 0
@@ -5018,23 +4996,12 @@ def agent(obs, config=None):
         _planet_prev_owner.clear()
         _freshly_lost_planets.clear()
         _opp_profile = {}
-        _four_p_external_agent = None
     _agent_step += 1
 
     start = time.perf_counter()
     world = World(obs, inferred_step=_agent_step - 1)
     if not world.my_planets:
         return []
-
-    if FOUR_P_EXTERNAL_ENABLED and not world.is_2p:
-        external_4p = _load_four_p_external_agent()
-        if external_4p is not None:
-            try:
-                external_moves = external_4p(obs)
-                if world.step >= FOUR_P_EXTERNAL_SWITCH_STEP:
-                    return external_moves
-            except Exception:
-                pass
 
     
     if not world.is_2p:
@@ -5048,3 +5015,4 @@ def agent(obs, config=None):
 
 
 __all__ = ["agent", "Planet", "Fleet"]
+

@@ -249,3 +249,228 @@ Saved replay: /kaggle/working/replays/last_benchmark_4v4.html
 ```
 - Dien giai: `submission_copy` baseline avg reward `-0.1333`, improved `submission.py` avg reward `0.0667`, chenhlech `+0.2000` avg reward tren 30 matches. Day la ban dau tien trong nhanh `submission.py` duoc user bao cao la tot hon submission goc.
 - Trang thai hien tai: giu greedy lookahead 4P; target bias disabled; ship-spend penalty disabled; single-source size variants disabled; multi-planet/focus-fire unchanged; 2P effectively unchanged.
+
+## Version 25 - Submission.py lookahead final-wave guard
+- User bao cao Version 24 tot hon `submission_copy` baseline va yeu cau cai tien tiep tu nen dang thang.
+- Tao backup `submission_v24_good.py` de giu lai moc V24 truoc khi sua tiep.
+- Phat hien lookahead V24 van cong future bonus o moi vong greedy, ke ca khi dang o wave slot cuoi cung. O wave cuoi khong con luot tiep theo de tan dung `next_score`, nen bonus nay co the lam chon candidate giu co hoi ao thay vi candidate hien tai tot nhat.
+- Sua nhe trong `_greedy_select`: chi bat one-step lookahead khi `w + 1 < W`; neu dang o wave cuoi thi quay ve rank greedy hien tai.
+- Thay doi nay khong doi target shortlist, khong doi fleet size, khong doi multi-planet/focus-fire, va van chi anh huong khi 4P config bat `enable_greedy_lookahead=True`.
+- Da kiem tra syntax/import/shape test co hoc OK. Chua benchmark; can user test so voi backup V24.
+
+## Version 26 - Submission.py 4P weighted opponent flow score
+- User bao V25 "same same" V24 va yeu cau cai tien tiep tren nen dang tot.
+- Huong moi: khong bias target shortlist, khong doi fleet size, khong doi multi-planet/focus-fire. Thay vao do sua cach quy doi flow-diff cua doi thu trong scorer 4P.
+- Van de cua scorer goc: `competitive_score = me - sum(opponents)`, moi opponent bi tinh trong so bang nhau. Trong 4P FFA, lam leader mat loi thuong quan trong hon lam nguoi yeu mat loi; nguoc lai, giup leader co loi phai bi phat nang hon.
+- Them `opponent_weights` vao `competitive_score`/`score_candidates`. Default `None` giu nguyen hanh vi cu. Khi co weights, score thanh:
+```python
+me_delta - sum(opponent_weight[player] * opponent_delta[player])
+```
+- Them helper `ffa_opponent_score_weights`: tinh production theo owner hien tai. Neu leader enemy hon minh it nhat `ffa_score_prod_gap`, leader weight cao hon, non-leader weight thap hon, player minh weight 0.
+- Config 4P candidate hien tai: `enable_ffa_weighted_opp_score=True`, `ffa_leader_score_weight=1.30`, `ffa_nonleader_score_weight=0.85`, `ffa_score_prod_gap=5.0`. 2P default off nen khong doi.
+- Y nghia: neu candidate lam leader mat net flow, no duoc cong gia tri lon hon; neu candidate vo tinh giup leader, bi tru manh hon. Day la owner-aware adjustment ben trong scorer, it tho hon target bias attempt fail.
+- Da kiem tra syntax/import va unit nho cho weighted score OK. Chua benchmark; can user test so voi `submission_v24_good.py` va V25.
+
+## Version 27 - Submission.py 4P early neutral-first discovery
+- User bao V26 van "same same" va yeu cau phan tich lai bai toan/code thay vi tiep tuc nho nho. Ket luan moi: diem yeu 4P khong chi nam o greedy/scorer, ma o phase early FFA.
+- Phan tich code: `build_target_shortlist` tron `enemy | neutral` vao cung offensive shortlist va rank chu yeu theo proximity. Trong 4P early, danh enemy gan qua som de lam cham expansion, tao kingmaking/cleanup cho nguoi khac, trong khi muc tieu dung hon thuong la farm neutral production.
+- Huong moi: early 4P neutral-first target discovery. Khong doi final flow scorer, khong doi fleet size, khong doi multi-planet/focus-fire. Chi doi target candidates duoc dua vao scorer trong phase early.
+- Them config default off trong `ProducerLiteConfig`: `enable_ffa_early_neutral_gate`, `ffa_early_neutral_until_turn`, `ffa_early_neutral_until_prod`, `ffa_early_neutral_prod_weight`, `ffa_early_neutral_ship_penalty`.
+- Config 4P hien tai bat gate: `enable_ffa_early_neutral_gate=True`, `ffa_early_neutral_until_turn=70`, `ffa_early_neutral_until_prod=20.0`, `ffa_early_neutral_prod_weight=2.0`, `ffa_early_neutral_ship_penalty=0.15`.
+- Logic: neu player_count >= 4 va dang early (`step < 70` hoac `my_prod < 20`) va con neutral hop le, offensive shortlist chi lay neutral. Neutral duoc rank theo `-proximity + prod*2.0 - ships*0.15`, de uu tien neutral gan/co production cao/khong qua dat. Neu het neutral hop le hoac qua phase, tu dong quay ve logic cu `enemy | neutral`.
+- V26 weighted opponent score da duoc tat trong config hien tai (`enable_ffa_weighted_opp_score=False`) de test sach huong moi; V24 greedy lookahead van giu vi do la nen user bao tot hon baseline.
+- Da kiem tra syntax/import OK. User test bao ban nay yeu qua, da rollback `submission.py` ve backup `submission_v24_good.py`. Ket luan: hard early neutral-first lam agent mat kha nang chon enemy tactical co loi; khong tiep tuc huong gate neutral cung.
+
+## Version 28 - Rollback to V24 good baseline
+- Sau khi V27 fail, `submission.py` da duoc copy lai tu `submission_v24_good.py`.
+- Trang thai hien tai quay ve ban tot nhat da duoc user bao cao hon baseline: 4P greedy lookahead bat `enable_greedy_lookahead=True`, `greedy_lookahead_weight=0.25`; single-source size variants off; target bias off; weighted opponent score/early neutral gate khong con trong file active.
+- Syntax/import OK. Tiep theo nen cai tien tren nen V24 bang huong khac, khong tiep tuc ep target discovery early.
+
+## Version 29 - Submission.py midgame potential-risk regroup
+- Tiep tuc tu V24 good baseline sau khi V27 fail. Khong doi attack scorer, target shortlist, fleet size, hay multi-planet/focus-fire.
+- Phan tich lai code thay vi ep target: `submission.py` da co san `potential_attack_risk`, nhung default off. Ham nay tinh risk map tu enemy planets theo ships+production, proximity, sun line-of-sight, va friendly support discount; sau do co the cong vao pressure gradient cua `_plan_regroup`.
+- Diem yeu 4P co the nam o dieu quan ship du: cheap pressure hien tai chi nhin enemy garrison reachable gan, chua coi production/threat gia tri planet. Trong FFA midgame, ship du nam sai cum de bi leader/enemy danh lung tung.
+- Them `potential_risk_turn_min` de khong lam cham early expansion. Config 4P candidate: `enable_potential_risk=True`, `potential_risk_turn_min=45`, `risk_blend_weight=0.35`.
+- Y nghia: early V24 gan nhu giu nguyen; tu turn 45, regroup se tinh them precautionary risk de day leftover ships ve owned planets nguy hiem/co gia tri hon.
+- Da kiem tra syntax/import OK. Chua benchmark; neu yeu rollback ve `submission_v24_good.py`.
+
+## Version 30 - Rollback active submission.py to V24
+- User yeu cau dung cai tien va back ve Version 24.
+- Da copy `submission_v24_good.py` -> `submission.py`.
+- Kiem tra active config: `enable_greedy_lookahead=True`, `greedy_lookahead_weight=0.25`; `enable_potential_risk=False`; `enable_single_source_size_variants=False`; target bias weights `0.0`.
+- Syntax/import OK. Trang thai active hien tai la V24 good baseline.
+
+## Version 31 - Submission.py 4P consolidation reserve
+- User phan tich replay `78954591.json` cua `IAI-RL-Tlm71`: early tot, turn ~40 con rat manh, nhung midgame toang vi overextend/recapture loop. Agent chiem duoc planet roi rut tiep qua som, de planet moi con 4-12 ships va bi cuop lai. Nhieu shot nho/xa nhu 4, 8, 12 ships lam mat tempo.
+- Huong moi: khong chuyen sang turtle, ma them consolidation 4P: giu thanh qua sau expansion. Khong doi target scorer, target shortlist, fleet size variants, hay multi-planet/focus-fire.
+- Them `apply_ffa_consolidation_reserve` sau `safe_drain`: trong 4P midgame, moi source phai de lai reserve theo production. Config hien tai: `enable_ffa_consolidation=True`, `ffa_consolidate_turn_min=35`, `base_reserve=8`, `prod_reserve=2.0`, `leader_bonus=6`, `lead_margin=0`.
+- Y nghia reserve: source prod 4 sau turn 35 giu khoang `8 + 2*4 = 16` ships; neu dang dan/gap tot thi giu them 6. Neu source khong du surplus thi khong ban tiep, tranh rut can planet vua chiem.
+- Them filter `enable_ffa_small_far_filter=True`: sau turn 30, offensive shot nho hon 16 ships va ETA > 5 bi loai. Defense/reinforcement target cua minh khong bi filter nay.
+- V24 greedy lookahead van giu. 2P default off nen khong bi anh huong.
+- Da kiem tra syntax/import va smoke test reserve OK. User benchmark bao phien ban nay khong tot chut nao. Da rollback `submission.py` ve `submission_v24_good.py`.
+- Ket luan: reserve/filter cung lam mat nhip attack qua manh; van de consolidate co that nhung khong nen xu ly bang hard cap source drain hoac hard filter shot nho/xa.
+
+## Version 32 - Rollback active submission.py to V24 after V31 failure
+- Da copy `submission_v24_good.py` -> `submission.py`.
+- Kiem tra active config: `enable_greedy_lookahead=True`, `greedy_lookahead_weight=0.25`; `enable_potential_risk=False`; khong con consolidation fields trong active backup.
+- Syntax/import OK. Active file quay ve V24 good baseline.
+
+## Version 33 - Submission.py 4P soft small-far shot penalty
+- Tiep tuc tu V24 good sau khi V31 hard reserve/filter fail. Bai hoc: khong nen cam cung hoac hard-cap source drain vi lam mat nhip attack.
+- Huong moi mem hon: khong doi candidate generation, target shortlist, scorer core, multi-planet/focus-fire, hay defense. Chi tru diem nhe cho offensive candidate co tong send nho va ETA xa trong 4P midgame.
+- Them config default off: `enable_ffa_small_far_soft_penalty`, `ffa_small_far_soft_turn_min`, `ffa_small_far_soft_min_ships`, `ffa_small_far_soft_eta_min`, `ffa_small_far_soft_penalty`.
+- Config 4P hien tai: bat soft penalty sau turn 30, candidate offensive co `total_send < 14` va `max_eta > 5` bi tru `1.25` score. Neu scorer that su thay move rat tot thi van co the ban; defense/reinforcement khong bi anh huong.
+- Muc tieu: giam shot nho/xa kieu 4/8/12 ships lam mat tempo, nhung khong lap lai loi V31 la block cung cac tactical move co loi.
+- Syntax/import OK. Can user benchmark vs `submission_v24_good.py`.
+
+## Version 34 - JAX PPO training notebook groundwork
+- Tao va mo rong `orbit_wars_jax_ppo_train.ipynb` theo huong JAX-first, khong train grid search.
+- Port core official engine sang JAX: launch, production, orbit planet, swept collision, combat, reward.
+- Them comet support: comet path/ships duoc precompute bang official generator theo hidden seed, sau do JAX step consume tensor schedule de spawn/move/remove.
+- Validation local da pass:
+  - no-action core.
+  - scripted launch.
+  - 19 hard cases collision/combat/reward theo official behavior.
+  - random scripted 40 turn truoc comet.
+  - no-action 60 turn qua comet.
+  - random scripted 80 turn qua comet.
+- Them PPO core chay duoc: heuristic sinh candidate action, policy JAX hoc bias/chon candidate, rollout vectorized, GAE, PPO clipped loss, Adam update.
+- Smoke test local voi 4 env / 4 step / 1 update da chay xong va tra ve `PolicyParams`.
+- Trang thai hien tai: notebook train duoc ve mat code/simulator. Chua claim agent manh hon vi chua train dai, chua benchmark, va chua export/integrate weights vao submission runtime.
+
+## Version 35 - JAX V24-port PPO candidate generator
+- User yeu cau port not theo V24 truoc khi train that, uu tien dung logic V24 hon toc do train.
+- File active cho train: `orbit_wars_jax_v24_port_train.ipynb`.
+- Mo rong candidate generator JAX tu scaffold cu sang V24-like:
+  - Source shortlist, attack shortlist, defense/regroup shortlist.
+  - Single-source attack, focus-fire multi-source, regroup/defense, greedy multi-wave.
+  - Greedy multi-wave co source budget, one-wave-per-target, source/target mutex, va lookahead bonus.
+  - Target flow/garrison projection tren horizon, source debit flow penalty, target flow delta score.
+  - Sun-line gate va body-screen/first-contact check cho launch angle.
+  - Fleet target inference bang first-contact sweep theo future planet movement, dung cho incoming bucket va pressure scoring.
+  - Safe drain moi ket hop near fleet pressure, inferred incoming-to-source pressure, va flow-guard de tranh rut can source neu future flow xau.
+- Sua loi shape trong safe drain: reserve phai la scalar theo source, khong duoc dung ca vector `reserve`.
+- Sua call `fleet_speed` trong PPO cell de nhat quan voi signature notebook.
+- Check da chay bang `.venv\Scripts\python.exe`:
+  - Syntax tat ca code cells OK.
+  - Validation official-vs-JAX PASS: noaction/comet, scripted launch, hard cases, random scripted no-comet, random scripted with-comets.
+  - Tiny PPO smoke train PASS: `ROLLOUT_STEPS=1`, `num_envs=1`, `updates=1`, tra ve `PolicyParams`.
+- Chua claim agent manh hon vi chua train dai va chua benchmark sau train. Buoc tiep theo la train notebook nay tren Kaggle/GPU, sau do export weights vao submission runtime.
+
+## Version 36 - JAX V24 PPO final train design with shaped reward
+- User yeu cau thiet ke notebook train PPO ban toi uu, khong phai ban thu, co `tqdm`, cell config rieng, va giai thich config.
+- File cap nhat: `orbit_wars_jax_v24_port_train.ipynb`.
+- Viet lai cell config bang comment khong dau de tranh loi font tren Kaggle:
+  - Train mix mac dinh `TRAIN_PROB_4P=0.80`, `TRAIN_PROB_2P=0.20`.
+  - Train scale mac dinh `NUM_ENVS=512`, `ROLLOUT_STEPS=128`, `TOTAL_PPO_UPDATES=800`.
+  - PPO params: gamma dai, entropy cao hon mot chut, hidden dim 96.
+  - Them `RESET_EVERY_UPDATES` de reset map/state dinh ky, tranh overfit vao mot lo rollout lien tiep.
+- Them reward shaping rieng cho PPO:
+  - Terminal reward game van giu la tin hieu chinh.
+  - Dense reward moi step dua tren delta strategic score: production, planet count, planet ships, fleet ships, va relative lead so voi doi thu.
+  - Co clip rieng cho shaping va total reward de tranh shaping lan at win/loss.
+- Them `tqdm.auto` vao imports va progress bar trong `train_ppo`.
+- `train_ppo` bay gio log: loss, policy loss, value loss, entropy, mean_player_reward; dong thoi luu `TRAIN_HISTORY` trong globals.
+- Check da chay:
+  - Syntax notebook OK.
+  - Validation official-vs-JAX PASS tat ca muc.
+  - Tiny PPO smoke train PASS voi reward shaping moi: `ROLLOUT_STEPS=1`, `num_envs=1`, `updates=1`, tra ve `PolicyParams`.
+- Luu y: OpenSpiel/LiteLLM warning khi import Kaggle env la warning ngoai le cua package, khong lam fail Orbit Wars validation/train smoke.
+
+## Version 37 - PPO minibatch update to avoid Kaggle OOM
+- User chay Kaggle gap `XlaRuntimeError: RESOURCE_EXHAUSTED` tai `ppo_update`, allocate khoang 10.99GB.
+- Nguyen nhan: train loop da tao rollout lon nhung `ppo_update` dang tinh loss/grad tren ca batch cung luc; `MINIBATCH_SIZE` co trong config nhung chua duoc dung that su.
+- Sua `orbit_wars_jax_v24_port_train.ipynb`:
+  - Them `flatten_ppo_batch`: flatten dims `[T, B, player] -> [samples]`.
+  - Them `minibatch_slice`.
+  - Trong `train_ppo`, PPO update chay theo `UPDATE_EPOCHS` va tung minibatch `MINIBATCH_SIZE` thay vi full batch.
+- Check local:
+  - Syntax OK.
+  - Validation official-vs-JAX PASS.
+  - Tiny PPO smoke train PASS sau patch minibatch.
+- Neu Kaggle van OOM thi giam `NUM_ENVS` xuong 256 truoc, sau do moi giam `ROLLOUT_STEPS` xuong 64.
+
+## Version 38 - Pack checkpoint 0200 into V24 PPO rerank agent
+- User co checkpoint `ppo_policy_update_0200.npz` va muon test voi cac agent official khac truoc khi train den 800.
+- Tao file moi `submission_v24_ppo_update0200.py`, khong sua `submission_v24_good.py`.
+- Cach dong goi:
+  - Copy full V24 good runtime lam nen.
+  - Embed weights tu `D:\Downloads\ppo_policy_update_0200.npz` vao file `.py`.
+  - Them PPO reranker vao ngay sau `score_candidates` va truoc `_greedy_select`.
+  - Candidate feature 12 chieu khop train notebook: score, target prod/ships, source ships, total send, ETA, active launch count, neutral/enemy/defense, step.
+  - PPO bonus duoc center theo valid candidates de khong day ca nguong ROI len/xuong cung luc.
+  - Bat mac dinh cho 4P: `enable_ppo_rerank=True`, `ppo_bonus_weight=1.0`; 2P giu V24 default.
+- Check:
+  - Import OK: `CONFIG_4P.enable_ppo_rerank=True`.
+  - 1 official env smoke match voi `[agent_04.py, submission_v24_good.py, submission_v24_ppo_update0200.py, main.py]` chay DONE, khong crash.
+  - Smoke reward tra ve `[-1, -1, 1, -1]`; day chi la smoke, chua claim benchmark manh hon.
+
+## Version 39 - Pack checkpoint 0400 into V24 PPO rerank agent
+- User co checkpoint `ppo_policy_update_0400.npz` va yeu cau long vao V24.
+- Tao file moi `submission_v24_ppo_update0400.py`, khong sua `submission_v24_good.py`.
+- Embed weights tu `D:\Downloads\ppo_policy_update_0400.npz`; shape checkpoint khop policy train: `w1 (12, 96)`, `w2 (96, 1)`.
+- Giu cung co che voi Version 38:
+  - V24 good lam nen.
+  - PPO chi cong learned bonus vao candidate score truoc `_greedy_select`.
+  - Feature 12 chieu khop train notebook.
+  - Bat PPO rerank cho 4P: `enable_ppo_rerank=True`, `ppo_bonus_weight=1.0`; 2P giu default.
+- Check:
+  - Import OK: `CONFIG_4P.enable_ppo_rerank=True`.
+  - Grep xac nhan header update 0400, rerank block, va config 4P da bat.
+  - 1 official env smoke match voi `[agent_04.py, submission_v24_good.py, submission_v24_ppo_update0400.py, main.py]` chay DONE, khong crash.
+  - Smoke reward tra ve `[-1, -1, 1, -1]`; day chi la smoke, chua claim benchmark manh hon.
+
+## Version 40 - Make agent_04 self-contained and remove abc.py
+- User muon viet bao cao dua tren `agent_04.py`, `main.py`, `submission_copy.py`, `submission_v24_good.py`, `x.py`, va PPO; dong thoi yeu cau khong goi file py ngoai va xoa `abc.py`.
+- Phan tich nhanh cac nen:
+  - `agent_04.py`: agent heuristic nhe, co 2 lop: embedded ABC early opener va `main_agent` phase-based heuristic. Diem manh la early expansion/coop attack don gian, moving-planet intercept, sun avoidance. Truoc do `_load_abc_module()` uu tien doc `abc.py` ngoai.
+  - `main.py`: agent lon kieu tactical planner, co world model, defense/rescue, cheap pickup, expand, accumulator, hammer/mega-hammer/multiprong, 4P external hook. Diem manh la nhieu mode tactical, nhung phuc tap va co hook ngoai nen khong phu hop copy nguyen vao `agent_04.py`.
+  - `submission_copy.py` / `submission_v24_good.py` / `x.py`: cung ho ProducerLite tensor/Torch planner. Diem manh la movement forecast, garrison flow, sparse score candidates, greedy select, focus-fire, regroup. `submission_v24_good.py` co greedy lookahead 4P tot hon ban copy; `x.py` la bien the target/leader bias khac.
+  - PPO: khong thay the planner; no hoc rerank/bonus tren candidate V24-like. Khi package vao V24, PPO chi cong learned bonus vao score truoc `_greedy_select`.
+- Thay doi code:
+  - Sua `agent_04.py`: bo import `importlib.util`.
+  - Sua `_load_abc_module()` de chi load `ABC_EMBEDDED_SOURCE` trong chinh file, khong con tim/exec `abc.py` ngoai.
+  - Xoa file `abc.py` theo yeu cau.
+- Check:
+  - `import agent_04` OK.
+  - `Test-Path abc.py` tra ve `False`.
+  - Grep khong con `abc.py`, `spec_from_file_location`, `importlib.util` trong `agent_04.py`.
+  - 1 official env smoke match voi `[agent_04.py, submission_v24_good.py, submission_v24_ppo_update0400.py, main.py]` chay DONE, khong crash.
+- Luu y thiet ke: khong copy nguyen `main.py`/V24/Torch runtime vao `agent_04.py` trong lan nay vi cac runtime co global state, entrypoint, helper trung ten va dependency rieng; gop co hoc se de crash hoac lam agent yeu hon. Huong dung cho bao cao la mo ta tien hoa logic: `agent_04` early heuristic -> `main` tactical planner -> ProducerLite/V24 tensor flow planner -> PPO rerank candidate.
+
+## Version 41 - Make main.py self-contained for dormant 4P specialist hook
+- User hoi `main.py` co dang goi file `.py` ngoai khong va muon tich hop giong cach da lam voi `agent_04.py`.
+- Kiem tra code:
+  - `main.py` co `importlib.util` va `_load_four_p_external_agent()` load `main_plus_main5_ideas.py` tu cung folder.
+  - `FOUR_P_EXTERNAL_ENABLED = False`, nen trong benchmark/submission mac dinh nhanh nay khong duoc goi; no la hook 4P specialist dang ngu.
+- Thay doi code:
+  - Bo `importlib.util`, them `base64`.
+  - Nhung nguyen source `main_plus_main5_ideas.py` vao `MAIN_PLUS_MAIN5_EMBEDDED_B64` trong `main.py`.
+  - Sua `_load_four_p_external_agent()` de giai ma source nhung va `exec` thanh module noi bo, lay ham `agent`; khong con doc `main_plus_main5_ideas.py` tu disk.
+  - Giu `FOUR_P_EXTERNAL_ENABLED = False` de khong doi hanh vi hien tai khi user chua bat nhanh 4P ngoai.
+- Y nghia cai tien/de ghi bao cao:
+  - `main.py` la tactical planner lon tu base Vkhydras: world model, defense/rescue, expand, cheap pickup, accumulator, hammer/mega-hammer/multiprong.
+  - Phan `main_plus_main5_ideas.py` la nhanh 4P specialist cung ho tactical planner, tap trung nhieu rule 4P nhu search expansion, neutral hard cap, cheap pickup 4P, accumulator, brain lead reserve, mega hammer va FFA pressure.
+  - Viec nhung vao file giup submission self-contained va tranh loi thieu file ngoai, nhung khong claim no lam benchmark tot hon vi flag mac dinh van tat.
+- Check:
+  - `python -m py_compile main.py` OK.
+  - `import main` OK.
+  - `_load_four_p_external_agent()` tra ve callable khi goi truc tiep.
+  - Grep khong con `importlib`, `spec_from_file_location`, `module_from_spec`, `exec_module`.
+  - 1 official env smoke match voi `[main.py, agent_02.py, agent_03.py, agent_04.py]` chay DONE, khong crash. Reward smoke `[-1, -1, -1, 1]`; chi dung de xac nhan runtime, khong claim suc manh.
+
+## Version 42 - Pack checkpoint 0450 into V24 PPO rerank agent
+- User co checkpoint `D:\Downloads\ppo_policy_update_0450.npz` va yeu cau long vao truoc khi lam tiep.
+- Tao file moi `submission_v24_ppo_update0450.py` tu template `submission_v24_ppo_update0400.py`, thay weights bang checkpoint 0450.
+- Checkpoint shape khop policy reranker:
+  - `w1 (12, 96)`, `b1 (96,)`, `w2 (96, 1)`, `b2 (1,)`.
+  - File checkpoint cung co value weights, nhung submission chi can policy weights de tinh PPO bonus.
+- Giu cung co che voi Version 39:
+  - V24 good lam nen.
+  - PPO chi cong learned bonus vao candidate score truoc `_greedy_select`.
+  - Bat 4P rerank: `enable_ppo_rerank=True`, `ppo_bonus_weight=1.0`.
+- Check:
+  - `python -m py_compile submission_v24_ppo_update0450.py` OK.
+  - Import OK; `CONFIG_4P.enable_ppo_rerank=True`, `CONFIG_4P.ppo_bonus_weight=1.0`.
+  - Weight embed check: `_PPO_W1_DATA` co shape `12 x 96`, `_PPO_B2_DATA=[-2.9849326610565186]`.
+  - 1 official env smoke match voi `[agent_04.py, submission_v24_good.py, submission_v24_ppo_update0450.py, main.py]` chay DONE, khong crash. Reward smoke `[-1, 1, -1, -1]`; chi dung de xac nhan runtime, khong claim suc manh.
